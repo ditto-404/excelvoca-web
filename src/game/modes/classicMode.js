@@ -88,9 +88,16 @@ export function createClassicMode({ words, progress, comboState }) {
       // The saved question is a snapshot, not a live reference — if that word
       // was since removed from the CSV, restoring it verbatim would show a
       // question for a word that no longer exists. Skip straight to a fresh one.
-      const stillExists = words.some((w) => w.key === restoreState.question.key);
-      if (stillExists) {
-        currentQuestion = restoreState.question;
+      const wordObj = words.find((w) => w.key === restoreState.question.key);
+      if (wordObj) {
+        // Rebuilt fresh from the live word, not the saved snapshot verbatim —
+        // a session saved under an older app version can be missing fields
+        // added since (e.g. choiceWords/choiceMeanings for the wrong-choice
+        // hint), and a stale snapshot would silently carry that gap forward
+        // instead of picking up newly-added question data. `reverse` is
+        // preserved so the resumed question keeps the same direction as
+        // what's already showing in the grid cell/formula bar.
+        currentQuestion = buildQuestion(wordObj, { reverse: restoreState.question.reverse });
       } else {
         nextQuestion();
       }
