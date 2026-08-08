@@ -24,6 +24,7 @@ import {
   showTranslationReveal,
   showCollocationHint,
   showSynonymHint,
+  showOtherMeaningsHint,
   markChoiceResult,
   showWrongChoiceHint,
   highlightCorrectChoice,
@@ -244,10 +245,14 @@ async function main() {
     updateStatsPanel(state);
     persistAll();
 
-    const hasHint = (state.question.collocation && state.question.collocationKo) || state.question.synonym;
+    const hasHint =
+      (state.question.collocation && state.question.collocationKo) ||
+      state.question.synonym ||
+      (state.question.otherSenses && state.question.otherSenses.length > 0);
     if (hasHint) {
       showCollocationHint(state.question.collocation, state.question.collocationKo);
       showSynonymHint(state.question.synonym);
+      showOtherMeaningsHint(state.question.word, state.question.otherSenses);
       pendingContinue = true;
       switchDontKnowToContinue(continueAfterDontKnow);
       return;
@@ -325,12 +330,16 @@ async function main() {
     // Example mode's translation (and any collocation hint) is meant to be
     // read, not glimpsed on a timer — wait for the user's own "continue"
     // (any key/tap), same as "모르겠다".
-    const hasHint = (state.question.collocation && state.question.collocationKo) || state.question.synonym;
+    const hasHint =
+      (state.question.collocation && state.question.collocationKo) ||
+      state.question.synonym ||
+      (state.question.otherSenses && state.question.otherSenses.length > 0);
     if (state.modeName === 'example' || hasHint) {
       if (state.modeName === 'example') showTranslationReveal(state.question.exampleKo);
       if (hasHint) {
         showCollocationHint(state.question.collocation, state.question.collocationKo);
         showSynonymHint(state.question.synonym);
+        showOtherMeaningsHint(state.question.word, state.question.otherSenses);
       }
       pendingContinue = true;
       switchDontKnowToContinue(continueAfterDontKnow);
@@ -360,6 +369,7 @@ async function main() {
     if (state.modeName === 'example') showTranslationReveal(state.question.exampleKo);
     showCollocationHint(state.question.collocation, state.question.collocationKo);
     showSynonymHint(state.question.synonym);
+    showOtherMeaningsHint(state.question.word, state.question.otherSenses);
     switchDontKnowToContinue(continueAfterDontKnow);
     updateStatsPanel(state);
     persistAll();

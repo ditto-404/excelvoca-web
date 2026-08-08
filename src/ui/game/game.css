@@ -172,6 +172,17 @@
   border-radius: 3px;
 }
 
+.quiz-other-senses {
+  margin: 0 8px 8px;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #8a6d1f;
+  background: #fbf3df;
+  border: 1px dashed #8a6d1f;
+  border-radius: 3px;
+}
+
 .quiz-typing-form {
   display: flex;
   gap: 6px;

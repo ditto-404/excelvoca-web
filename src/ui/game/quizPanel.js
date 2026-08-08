@@ -321,6 +321,32 @@ export function showSynonymHint(synonym) {
 }
 
 /**
+ * Appends "이 단어는 이런 뜻도 있어요" to the panel on answer reveal, for
+ * polysemous words registered as multiple rows (e.g. "address" (n) 주소 /
+ * (v) 다루다·처리하다) — otherwise the word's other sense only ever shows up
+ * as an unexplained surprise the next time it's quizzed as a different item.
+ * `otherSenses` is the array of `{pos, meaning}` built in questionFactory.js;
+ * no-ops (and clears any leftover hint from the previous question) when the
+ * word has no other registered sense.
+ */
+export function showOtherMeaningsHint(word, otherSenses) {
+  const panel = document.getElementById('quiz-panel');
+  if (!panel) return;
+  let el = panel.querySelector('.quiz-other-senses');
+  if (!otherSenses || otherSenses.length === 0) {
+    if (el) el.remove();
+    return;
+  }
+  if (!el) {
+    el = document.createElement('div');
+    el.className = 'quiz-other-senses';
+    panel.appendChild(el);
+  }
+  const list = otherSenses.map((s) => `${word} (${s.pos}) ${s.meaning}`).join(' / ');
+  el.textContent = `📚 다른 뜻도 있어요: ${list}`;
+}
+
+/**
  * Typing mode: no choices at all — a single text input the user types the
  * English word/phrase into. Auto-focused so play can continue without a
  * mouse click. Enter and the submit row both call `onSubmit(inputValue)`;

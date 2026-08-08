@@ -95,6 +95,19 @@ export function filterByPos(pos) {
   return words.filter((w) => w.pos === pos);
 }
 
+/**
+ * Other registered senses of the same word (e.g. "address" (n) 주소 also
+ * has "address" (v) 다루다/처리하다), excluding the sense identified by
+ * `excludeKey`. Used to surface "이 단어는 이런 뜻도 있어요" on answer
+ * reveal so a polysemous word's other pos/meaning isn't a total surprise
+ * the next time it comes up as a different quiz item.
+ */
+export function getOtherSenses(word, excludeKey) {
+  return words
+    .filter((w) => w.word === word && w.key !== excludeKey)
+    .map((w) => ({ pos: w.pos, meaning: w.meaning }));
+}
+
 export function searchWords(query) {
   const q = query.trim().toLowerCase();
   if (!q) return [];

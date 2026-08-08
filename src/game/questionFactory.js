@@ -1,5 +1,10 @@
 import { shuffle } from '../utils/shuffle.js';
-import { getRandomOtherMeanings, getRandomOtherWordDisplays, formatDisplay } from '../data/wordRepository.js';
+import {
+  getRandomOtherMeanings,
+  getRandomOtherWordDisplays,
+  getOtherSenses,
+  formatDisplay
+} from '../data/wordRepository.js';
 
 /**
  * Builds a 4-choice question for `wordObj`. Normally: word shown in the cell,
@@ -33,7 +38,8 @@ export function buildQuestion(wordObj, { reverse = false } = {}) {
       level: wordObj.level,
       choices,
       choiceMeanings,
-      correctIndex
+      correctIndex,
+      otherSenses: getOtherSenses(wordObj.word, wordObj.key)
     };
   }
 
@@ -59,7 +65,8 @@ export function buildQuestion(wordObj, { reverse = false } = {}) {
     level: wordObj.level,
     choices,
     choiceWords,
-    correctIndex
+    correctIndex,
+    otherSenses: getOtherSenses(wordObj.word, wordObj.key)
   };
 }
 
@@ -103,7 +110,8 @@ export function buildExampleQuestion(wordObj) {
     level: wordObj.level,
     choices,
     choiceWords,
-    correctIndex
+    correctIndex,
+    otherSenses: getOtherSenses(wordObj.word, wordObj.key)
   };
 }
 
@@ -127,6 +135,7 @@ export function buildTypingQuestion(wordObj) {
     collocationKo: wordObj.collocationKo,
     synonym: wordObj.synonym,
     level: wordObj.level,
-    correctAnswer: wordObj.word
+    correctAnswer: wordObj.word,
+    otherSenses: getOtherSenses(wordObj.word, wordObj.key)
   };
 }
