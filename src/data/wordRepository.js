@@ -48,10 +48,17 @@ function fillRandom(pool, count, keyFor, seen, result) {
  * enough to fill `count`) — otherwise a Korean meaning's own grammatical
  * ending (품사) can give away which choice is correct without knowing the
  * word at all, since the choices would visibly mix noun/verb/adjective forms.
+ *
+ * `excludeMeaning` (normally the correct answer's own meaning text) is also
+ * seeded into `seen` up front, so a near-synonym pair that happens to share
+ * the exact same Korean gloss (e.g. abandon/renounce both "포기하다/버리다")
+ * never gets drawn as a distractor — that would otherwise put the same
+ * choice text on screen twice, once as the correct answer and once as a
+ * decoy, with no way to tell them apart.
  */
-export function getRandomOtherMeanings(excludeWord, count, pos) {
+export function getRandomOtherMeanings(excludeWord, count, pos, excludeMeaning) {
   const basePool = words.filter((w) => w.word !== excludeWord);
-  const seen = new Set();
+  const seen = new Set(excludeMeaning ? [excludeMeaning] : []);
   const result = [];
   if (pos) fillRandom(basePool.filter((w) => w.pos === pos), count, (w) => w.meaning, seen, result);
   fillRandom(basePool, count, (w) => w.meaning, seen, result);
@@ -63,11 +70,12 @@ export function getRandomOtherMeanings(excludeWord, count, pos) {
  * "grave (n)"), no duplicates. Same same-pos-first preference as
  * `getRandomOtherMeanings` and for the same reason — here the pos suffix is
  * shown directly on every choice, so mixed pos would leak the answer even
- * more directly.
+ * more directly. `excludeDisplay` (the correct answer's own display text)
+ * is seeded into `seen` defensively, mirroring `getRandomOtherMeanings`.
  */
-export function getRandomOtherWordDisplays(excludeWord, count, pos) {
+export function getRandomOtherWordDisplays(excludeWord, count, pos, excludeDisplay) {
   const basePool = words.filter((w) => w.word !== excludeWord);
-  const seen = new Set();
+  const seen = new Set(excludeDisplay ? [excludeDisplay] : []);
   const result = [];
   if (pos) fillRandom(basePool.filter((w) => w.pos === pos), count, formatDisplay, seen, result);
   fillRandom(basePool, count, formatDisplay, seen, result);
