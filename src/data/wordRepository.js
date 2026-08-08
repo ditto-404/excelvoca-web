@@ -42,12 +42,15 @@ function fillRandom(pool, count, keyFor, seen, result) {
 }
 
 /**
- * Returns `count` random meanings from words other than `excludeWord`, with
- * no duplicate meanings. Distractors are drawn from words sharing `pos` with
- * the correct answer first (falling back to any pos only if that's not
- * enough to fill `count`) — otherwise a Korean meaning's own grammatical
- * ending (품사) can give away which choice is correct without knowing the
- * word at all, since the choices would visibly mix noun/verb/adjective forms.
+ * Returns `count` random {meaning, word} pairs from words other than
+ * `excludeWord`, with no duplicate meanings. Distractors are drawn from
+ * words sharing `pos` with the correct answer first (falling back to any pos
+ * only if that's not enough to fill `count`) — otherwise a Korean meaning's
+ * own grammatical ending (품사) can give away which choice is correct
+ * without knowing the word at all, since the choices would visibly mix
+ * noun/verb/adjective forms. The `word` each meaning came from rides along
+ * so the UI can reveal "that's actually X's meaning" when a distractor is
+ * picked by mistake.
  *
  * `excludeMeaning` (normally the correct answer's own meaning text) is also
  * seeded into `seen` up front, so a near-synonym pair that happens to share
@@ -62,16 +65,18 @@ export function getRandomOtherMeanings(excludeWord, count, pos, excludeMeaning) 
   const result = [];
   if (pos) fillRandom(basePool.filter((w) => w.pos === pos), count, (w) => w.meaning, seen, result);
   fillRandom(basePool, count, (w) => w.meaning, seen, result);
-  return result.map((w) => w.meaning);
+  return result.map((w) => ({ meaning: w.meaning, word: w.word }));
 }
 
 /**
- * Reverse-mode distractors: `count` random other words' display text (e.g.
- * "grave (n)"), no duplicates. Same same-pos-first preference as
- * `getRandomOtherMeanings` and for the same reason — here the pos suffix is
- * shown directly on every choice, so mixed pos would leak the answer even
- * more directly. `excludeDisplay` (the correct answer's own display text)
- * is seeded into `seen` defensively, mirroring `getRandomOtherMeanings`.
+ * Reverse-mode distractors: `count` random {display, meaning} pairs (e.g.
+ * "grave (n)" paired with its own Korean meaning), no duplicate display
+ * text. Same same-pos-first preference as `getRandomOtherMeanings` and for
+ * the same reason — here the pos suffix is shown directly on every choice,
+ * so mixed pos would leak the answer even more directly. `excludeDisplay`
+ * (the correct answer's own display text) is seeded into `seen` defensively,
+ * mirroring `getRandomOtherMeanings`. The `meaning` rides along so the UI
+ * can reveal what a wrongly-picked word actually means.
  */
 export function getRandomOtherWordDisplays(excludeWord, count, pos, excludeDisplay) {
   const basePool = words.filter((w) => w.word !== excludeWord);
@@ -79,7 +84,7 @@ export function getRandomOtherWordDisplays(excludeWord, count, pos, excludeDispl
   const result = [];
   if (pos) fillRandom(basePool.filter((w) => w.pos === pos), count, formatDisplay, seen, result);
   fillRandom(basePool, count, formatDisplay, seen, result);
-  return result.map((w) => formatDisplay(w));
+  return result.map((w) => ({ display: formatDisplay(w), meaning: w.meaning }));
 }
 
 export function filterByLevel(level) {

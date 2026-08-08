@@ -25,6 +25,7 @@ import {
   showCollocationHint,
   showSynonymHint,
   markChoiceResult,
+  showWrongChoiceHint,
   highlightCorrectChoice,
   switchDontKnowToContinue,
   renderTypingQuestion,
@@ -305,7 +306,19 @@ async function main() {
 
     const state = engine.getState();
     markChoiceResult(result.chosenIndex, result.wasCorrect);
-    if (!result.wasCorrect) highlightCorrectChoice(result.correctIndex);
+    if (!result.wasCorrect) {
+      highlightCorrectChoice(result.correctIndex);
+      const q = state.question;
+      let hint = '';
+      if (q.reverse) {
+        const meaning = q.choiceMeanings ? q.choiceMeanings[result.chosenIndex] : null;
+        if (meaning) hint = `(뜻: ${meaning})`;
+      } else {
+        const sourceWord = q.choiceWords ? q.choiceWords[result.chosenIndex] : null;
+        if (sourceWord && sourceWord !== q.word) hint = `(${sourceWord}의 뜻)`;
+      }
+      showWrongChoiceHint(result.chosenIndex, hint);
+    }
     updateStatsPanel(state);
     persistAll();
 

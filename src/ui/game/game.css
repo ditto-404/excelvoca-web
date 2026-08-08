@@ -53,6 +53,18 @@
   background: var(--color-wrong-bg);
   color: var(--color-wrong-text);
   border-color: var(--color-wrong-text);
+  flex-wrap: wrap;
+}
+
+/* Sits on its own line under the wrongly-picked choice's text, explaining
+   what that choice actually is (see showWrongChoiceHint in quizPanel.js). */
+.choice-wrong-hint {
+  flex-basis: 100%;
+  margin-left: 24px;
+  font-size: 11px;
+  font-style: italic;
+  color: var(--color-wrong-text);
+  opacity: 0.85;
 }
 
 .quiz-choice.reveal-correct {

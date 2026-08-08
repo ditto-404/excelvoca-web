@@ -23,6 +23,7 @@ import {
   showCollocationHint,
   showSynonymHint,
   markChoiceResult,
+  showWrongChoiceHint,
   highlightCorrectChoice,
   switchDontKnowToContinue,
   renderTypingQuestion,
@@ -360,7 +361,23 @@ async function main() {
     const cellPos = cellPositionFor(state);
     showAnswerFeedback(grid, cellPos, state.question.display, result.wasCorrect, result.answerText);
     markChoiceResult(result.chosenIndex, result.wasCorrect);
-    if (!result.wasCorrect) highlightCorrectChoice(result.correctIndex);
+    if (!result.wasCorrect) {
+      highlightCorrectChoice(result.correctIndex);
+      // Show what the wrongly-picked choice actually is: for a wrong meaning
+      // (forward mode), which word it belongs to; for a wrong word (reverse
+      // mode), what it actually means. Only annotate the chosen wrong choice,
+      // not the other decoys — this is about explaining *this* mistake.
+      const q = state.question;
+      let hint = '';
+      if (q.reverse) {
+        const meaning = q.choiceMeanings ? q.choiceMeanings[result.chosenIndex] : null;
+        if (meaning) hint = `(뜻: ${meaning})`;
+      } else {
+        const sourceWord = q.choiceWords ? q.choiceWords[result.chosenIndex] : null;
+        if (sourceWord && sourceWord !== q.word) hint = `(${sourceWord}의 뜻)`;
+      }
+      showWrongChoiceHint(result.chosenIndex, hint);
+    }
     updateStatsPanel(state);
     persistAll();
 

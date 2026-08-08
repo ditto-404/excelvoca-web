@@ -12,7 +12,12 @@ export function buildQuestion(wordObj, { reverse = false } = {}) {
 
   if (reverse) {
     const distractors = getRandomOtherWordDisplays(wordObj.word, 3, wordObj.pos, wordDisplay);
-    const choices = shuffle([wordDisplay, ...distractors]);
+    const choiceItems = shuffle([{ display: wordDisplay, meaning: wordObj.meaning }, ...distractors]);
+    const choices = choiceItems.map((c) => c.display);
+    // The Korean meaning behind each choice's English word/phrase, parallel
+    // to `choices` — lets the UI reveal "이건 사실 '~'라는 뜻이에요" next to
+    // a wrongly-picked word.
+    const choiceMeanings = choiceItems.map((c) => c.meaning);
     const correctIndex = choices.indexOf(wordDisplay);
 
     return {
@@ -27,12 +32,18 @@ export function buildQuestion(wordObj, { reverse = false } = {}) {
       synonym: wordObj.synonym,
       level: wordObj.level,
       choices,
+      choiceMeanings,
       correctIndex
     };
   }
 
   const distractors = getRandomOtherMeanings(wordObj.word, 3, wordObj.pos, wordObj.meaning);
-  const choices = shuffle([wordObj.meaning, ...distractors]);
+  const choiceItems = shuffle([{ meaning: wordObj.meaning, word: wordObj.word }, ...distractors]);
+  const choices = choiceItems.map((c) => c.meaning);
+  // The word each meaning choice actually belongs to, parallel to `choices`
+  // — lets the UI reveal "이건 사실 'X'의 뜻이에요" next to a wrongly-picked
+  // meaning instead of leaving the user to guess why it was wrong.
+  const choiceWords = choiceItems.map((c) => c.word);
   const correctIndex = choices.indexOf(wordObj.meaning);
 
   return {
@@ -47,6 +58,7 @@ export function buildQuestion(wordObj, { reverse = false } = {}) {
     synonym: wordObj.synonym,
     level: wordObj.level,
     choices,
+    choiceWords,
     correctIndex
   };
 }
@@ -66,7 +78,9 @@ export function buildQuestion(wordObj, { reverse = false } = {}) {
  */
 export function buildExampleQuestion(wordObj) {
   const distractors = getRandomOtherMeanings(wordObj.word, 3, wordObj.pos, wordObj.meaning);
-  const choices = shuffle([wordObj.meaning, ...distractors]);
+  const choiceItems = shuffle([{ meaning: wordObj.meaning, word: wordObj.word }, ...distractors]);
+  const choices = choiceItems.map((c) => c.meaning);
+  const choiceWords = choiceItems.map((c) => c.word);
   const correctIndex = choices.indexOf(wordObj.meaning);
 
   const variants = [{ en: wordObj.example, ko: wordObj.exampleKo }];
@@ -88,6 +102,7 @@ export function buildExampleQuestion(wordObj) {
     synonym: wordObj.synonym,
     level: wordObj.level,
     choices,
+    choiceWords,
     correctIndex
   };
 }

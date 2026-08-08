@@ -198,6 +198,23 @@ export function markChoiceResult(index, wasCorrect) {
   if (el) el.classList.add(wasCorrect ? 'correct' : 'wrong');
 }
 
+/**
+ * On a wrong pick, appends a small inline hint to that choice explaining
+ * what it actually is — "그건 사실 'X'의 뜻이에요" for a wrongly-picked
+ * meaning (forward mode), or the wrongly-picked word's own meaning (reverse
+ * mode) — so the miss teaches something instead of just being marked red.
+ * Only called for the chosen wrong choice, never the other decoys.
+ */
+export function showWrongChoiceHint(index, hintText) {
+  if (!hintText) return;
+  const el = document.querySelector(`#quiz-panel .quiz-choice[data-index="${index}"]`);
+  if (!el) return;
+  const hintEl = document.createElement('span');
+  hintEl.className = 'choice-wrong-hint';
+  hintEl.textContent = hintText;
+  el.appendChild(hintEl);
+}
+
 export function highlightCorrectChoice(index) {
   const el = document.querySelector(`#quiz-panel .quiz-choice[data-index="${index}"]`);
   if (el) el.classList.add('reveal-correct');
