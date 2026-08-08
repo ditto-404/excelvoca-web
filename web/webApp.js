@@ -312,10 +312,10 @@ async function main() {
       let hint = '';
       if (q.reverse) {
         const meaning = q.choiceMeanings ? q.choiceMeanings[result.chosenIndex] : null;
-        if (meaning) hint = `(뜻: ${meaning})`;
+        if (meaning) hint = `(${meaning})`;
       } else {
         const sourceWord = q.choiceWords ? q.choiceWords[result.chosenIndex] : null;
-        if (sourceWord && sourceWord !== q.word) hint = `(${sourceWord}의 뜻)`;
+        if (sourceWord && sourceWord !== q.word) hint = `(${sourceWord})`;
       }
       showWrongChoiceHint(result.chosenIndex, hint);
     }
