@@ -57,6 +57,34 @@ npm start
 
 두 프론트엔드가 동일한 학습 기록을 공유하도록, `progress.json`/`session.json`은 이 저장소가 아니라 **별도의 private 저장소**를 통해 GitHub Contents API로 읽고 씁니다. 이 저장소에는 개인 학습 데이터가 전혀 포함되지 않습니다.
 
+```mermaid
+flowchart LR
+    accTitle: ExcelVoca 진행 상황 동기화 상세 구조
+    accDescr: 웹 버전은 최초 접속 시 GitHub PAT를 등록하고 이후엔 4자리 PIN으로 여는 인증 과정을 거치며, 데스크톱 앱과 웹 버전 둘 다 GitHub Contents API로 progress.json과 session.json 두 파일을 읽고 쓰는 구조를 보여준다.
+
+    subgraph web_layer ["웹 버전"]
+        first_visit["최초 접속<br/>GitHub PAT 등록"]:::process_style
+        pin_unlock["이후 접속<br/>4자리 PIN"]:::process_style
+        web["웹 앱"]:::process_style
+    end
+
+    desktop["데스크톱 앱<br/>(Electron)"]:::process_style
+
+    subgraph data_repo ["excelvoca-data (private repo)"]
+        progress[("progress.json<br/>정답/오답/streak/랭크")]:::output_style
+        session[("session.json<br/>현재 문제/콤보/이어하기")]:::output_style
+    end
+
+    first_visit --> pin_unlock --> web
+    desktop -->|"GitHub Contents API"| progress
+    desktop -->|"GitHub Contents API"| session
+    web -->|"GitHub Contents API"| progress
+    web -->|"GitHub Contents API"| session
+
+    classDef process_style fill:#232522,stroke:#111111,stroke-width:2px,color:#f5f3ec
+    classDef output_style fill:#f6efde,stroke:#8a6f45,stroke-width:2px,color:#4a3b22
+```
+
 ## 라이선스
 
 개인용 프로젝트입니다. 재사용/배포를 염두에 두고 만들지 않았습니다.
@@ -120,6 +148,34 @@ Serve `web/index.html` as a static site (e.g. GitHub Pages). On first visit you 
 ### Progress sync
 
 So both frontends share the same learning record, `progress.json`/`session.json` are read and written via the GitHub Contents API from a **separate private repository**, not this one. This repository contains no personal learning data.
+
+```mermaid
+flowchart LR
+    accTitle: ExcelVoca Progress Sync Architecture In Detail
+    accDescr: Shows the web version's auth flow (register a GitHub PAT on first visit, then unlock with a 4-digit PIN afterward) and both the desktop app and web version reading and writing progress.json and session.json via the GitHub Contents API.
+
+    subgraph web_layer ["Web version"]
+        first_visit["First visit<br/>register GitHub PAT"]:::process_style
+        pin_unlock["Later visits<br/>4-digit PIN"]:::process_style
+        web["Web app"]:::process_style
+    end
+
+    desktop["Desktop app<br/>(Electron)"]:::process_style
+
+    subgraph data_repo ["excelvoca-data (private repo)"]
+        progress[("progress.json<br/>correct/incorrect/streak/rank")]:::output_style
+        session[("session.json<br/>current question/combo/resume")]:::output_style
+    end
+
+    first_visit --> pin_unlock --> web
+    desktop -->|"GitHub Contents API"| progress
+    desktop -->|"GitHub Contents API"| session
+    web -->|"GitHub Contents API"| progress
+    web -->|"GitHub Contents API"| session
+
+    classDef process_style fill:#232522,stroke:#111111,stroke-width:2px,color:#f5f3ec
+    classDef output_style fill:#f6efde,stroke:#8a6f45,stroke-width:2px,color:#4a3b22
+```
 
 ### License
 
