@@ -1,16 +1,27 @@
-// Fill these in after creating a PRIVATE GitHub repo to hold progress.json/
-// session.json (never the public code repo — those files are personal study data).
-const REPO_OWNER = 'hayein-bit';
+// Private GitHub repo holding progress.json/session.json (never the public code
+// repo — those files are personal study data).
+const REPO_OWNER = 'ditto-404';
 const REPO_NAME = 'excelvoca-data';
 const DATA_PATH = 'data'; // folder inside that repo holding progress.json etc.
+const BRANCH = 'main';
 
 const TOKEN_BLOB_KEY = 'excelvoca_gh_token_enc';
 const SETTINGS_KEY = 'excelvoca_settings';
+const PENDING_KEY = 'excelvoca_pending_sync';
+
+// Sync pacing. Saving straight through to the Contents API meant one commit per
+// PUT, and persistAll() fires a progress + session write after every answer — so
+// one question cost two commits and the data repo collected 1,546 auto-sync
+// commits in two weeks. Writes now land in localStorage instantly and are pushed
+// as a SINGLE commit once the user stops answering, so a whole study run is one
+// commit instead of hundreds.
+const FLUSH_IDLE_MS = 30000; // push once answering pauses for 30s
+const FLUSH_MAX_MS = 300000; // ...but never sit on changes longer than 5 min
 
 /**
  * Drop-in replacement for src/main/preload.js's `window.excelvoca` bridge,
- * backed by the GitHub Contents API (a private repo) instead of Electron IPC/
- * fs — so every module under src/ (wordRepository, progressStore, sessionStore,
+ * backed by the GitHub API (a private repo) instead of Electron IPC/fs — so
+ * every module under src/ (wordRepository, progressStore, sessionStore,
  * settingsStore, dailyLogStore, and everything in src/game/) works unmodified.
  * See CLAUDE.md's "Web version" section for why GitHub instead of OneDrive.
  *
@@ -74,6 +85,8 @@ export async function unlock(pin) {
       new Uint8Array(blob.cipher).buffer
     );
     cachedToken = new TextDecoder().decode(plainBuf);
+    // A previous visit may have closed before its last flush landed.
+    flush();
     return true;
   } catch {
     return false;
@@ -85,14 +98,14 @@ export function signOut() {
   cachedToken = '';
 }
 
-const API_BASE = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/contents/${DATA_PATH}`;
+const REPO_API = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}`;
+const CONTENTS_API = `${REPO_API}/contents/${DATA_PATH}`;
 
-async function ghRequest(path, options = {}) {
-  const token = getToken();
-  const res = await fetch(`${API_BASE}/${path}`, {
+async function ghFetch(url, options = {}) {
+  const res = await fetch(url, {
     ...options,
     headers: {
-      Authorization: `Bearer ${token}`,
+      Authorization: `Bearer ${getToken()}`,
       Accept: 'application/vnd.github+json',
       ...(options.headers || {})
     }
@@ -104,6 +117,14 @@ async function ghRequest(path, options = {}) {
   return res;
 }
 
+function ghApi(path, body, method = 'POST') {
+  return ghFetch(`${REPO_API}${path}`, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+}
+
 function b64EncodeUtf8(str) {
   return btoa(unescape(encodeURIComponent(str)));
 }
@@ -113,42 +134,164 @@ function b64DecodeUtf8(str) {
 }
 
 async function ghGetFile(path) {
-  const res = await ghRequest(path);
-  if (res.status === 404) return { text: null, sha: null };
+  const res = await ghFetch(`${CONTENTS_API}/${path}`);
+  if (res.status === 404) return { text: null };
   if (!res.ok) throw new Error(`GitHub GET ${path} failed: ${res.status}`);
   const json = await res.json();
-  return { text: b64DecodeUtf8(json.content), sha: json.sha };
+  return { text: b64DecodeUtf8(json.content) };
 }
 
-async function ghPutFile(path, text, message) {
-  // Contents API requires the current sha to update an existing file.
-  const { sha } = await ghGetFile(path);
-  const res = await ghRequest(path, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      message: message || `update ${path}`,
-      content: b64EncodeUtf8(text),
-      sha: sha || undefined
-    })
-  });
-  if (!res.ok) throw new Error(`GitHub PUT ${path} failed: ${res.status}`);
+/**
+ * Writes every changed file as ONE commit via the Git Data API (blob -> tree ->
+ * commit -> ref), instead of one Contents-API PUT (= one commit) per file.
+ * A `null` value deletes that file. No-ops when the resulting tree is unchanged,
+ * so a flush with nothing new never leaves an empty commit behind.
+ */
+async function commitFiles(files, message) {
+  const refRes = await ghFetch(`${REPO_API}/git/ref/heads/${BRANCH}`);
+  if (!refRes.ok) throw new Error(`GitHub ref 조회 실패: ${refRes.status}`);
+  const baseSha = (await refRes.json()).object.sha;
+
+  const baseCommitRes = await ghFetch(`${REPO_API}/git/commits/${baseSha}`);
+  if (!baseCommitRes.ok) throw new Error(`GitHub commit 조회 실패: ${baseCommitRes.status}`);
+  const baseTreeSha = (await baseCommitRes.json()).tree.sha;
+
+  const tree = [];
+  for (const [fileName, value] of Object.entries(files)) {
+    const path = `${DATA_PATH}/${fileName}`;
+    if (value === null) {
+      tree.push({ path, mode: '100644', type: 'blob', sha: null });
+      continue;
+    }
+    const blobRes = await ghApi('/git/blobs', {
+      content: b64EncodeUtf8(JSON.stringify(value, null, 2)),
+      encoding: 'base64'
+    });
+    if (!blobRes.ok) throw new Error(`GitHub blob 생성 실패: ${blobRes.status}`);
+    tree.push({ path, mode: '100644', type: 'blob', sha: (await blobRes.json()).sha });
+  }
+
+  const treeRes = await ghApi('/git/trees', { base_tree: baseTreeSha, tree });
+  if (!treeRes.ok) throw new Error(`GitHub tree 생성 실패: ${treeRes.status}`);
+  const newTreeSha = (await treeRes.json()).sha;
+  if (newTreeSha === baseTreeSha) return true; // nothing actually changed
+
+  const commitRes = await ghApi('/git/commits', { message, tree: newTreeSha, parents: [baseSha] });
+  if (!commitRes.ok) throw new Error(`GitHub commit 생성 실패: ${commitRes.status}`);
+  const newCommitSha = (await commitRes.json()).sha;
+
+  const refUpdate = await ghApi(`/git/refs/heads/${BRANCH}`, { sha: newCommitSha }, 'PATCH');
+  if (!refUpdate.ok) throw new Error(`GitHub ref 갱신 실패: ${refUpdate.status}`);
   return true;
 }
 
-async function ghDeleteFile(path, message) {
-  const { sha } = await ghGetFile(path);
-  if (!sha) return true;
-  const res = await ghRequest(path, {
-    method: 'DELETE',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message: message || `delete ${path}`, sha })
-  });
-  if (!res.ok && res.status !== 404) throw new Error(`GitHub DELETE ${path} failed: ${res.status}`);
-  return true;
+// --- pending write buffer -------------------------------------------------
+// Every save is durable the moment it happens (mirrored to localStorage
+// synchronously), so a crash or a closed tab before the next flush loses
+// nothing — the buffer is replayed on the next unlock(). The in-memory copy is
+// the source of truth; localStorage is only its backup across page loads.
+
+let pendingFiles = {}; // fileName -> value (null = delete the file)
+let pendingWrites = 0;
+
+try {
+  const raw = localStorage.getItem(PENDING_KEY);
+  const saved = raw ? JSON.parse(raw) : null;
+  if (saved && saved.files) {
+    pendingFiles = saved.files;
+    pendingWrites = saved.writes || 0;
+  }
+} catch {
+  /* unreadable buffer: start clean rather than block startup */
 }
+
+function persistPending() {
+  try {
+    if (!Object.keys(pendingFiles).length) localStorage.removeItem(PENDING_KEY);
+    else localStorage.setItem(PENDING_KEY, JSON.stringify({ files: pendingFiles, writes: pendingWrites }));
+  } catch {
+    /* quota/private-mode: the in-memory buffer still carries the data */
+  }
+}
+
+let idleTimer = null;
+let maxTimer = null;
+let flushing = false;
+let reflushQueued = false;
+
+function clearTimers() {
+  clearTimeout(idleTimer);
+  clearTimeout(maxTimer);
+  idleTimer = null;
+  maxTimer = null;
+}
+
+function scheduleFlush() {
+  clearTimeout(idleTimer);
+  idleTimer = setTimeout(() => flush(), FLUSH_IDLE_MS);
+  if (!maxTimer) maxTimer = setTimeout(() => flush(), FLUSH_MAX_MS);
+}
+
+function queueWrite(fileName, value) {
+  pendingFiles[fileName] = value;
+  pendingWrites += 1;
+  persistPending();
+  scheduleFlush();
+  return Promise.resolve(true);
+}
+
+/** Pushes everything buffered so far as one commit. Safe to call at any time. */
+export async function flush() {
+  if (flushing) {
+    reflushQueued = true;
+    return true;
+  }
+  if (!Object.keys(pendingFiles).length) {
+    clearTimers();
+    return true;
+  }
+  // Not signed in yet: keep the buffer and retry after the next unlock().
+  if (!isSignedIn()) return false;
+
+  clearTimers();
+  flushing = true;
+  const sending = { ...pendingFiles };
+  const sendingWrites = pendingWrites;
+  try {
+    await commitFiles(sending, `sync: 학습 진행 상황 (${sendingWrites}건 반영)`);
+    // Drop only what this flush carried — a save that landed mid-flush stays
+    // queued, which the identity check below distinguishes.
+    for (const [fileName, value] of Object.entries(sending)) {
+      if (pendingFiles[fileName] === value) delete pendingFiles[fileName];
+    }
+    pendingWrites = Object.keys(pendingFiles).length ? Math.max(pendingWrites - sendingWrites, 1) : 0;
+    persistPending();
+    return true;
+  } catch (err) {
+    // Buffer is untouched, so the next flush retries it.
+    console.warn('[excelvoca] GitHub 동기화 실패, 다음 시도에 재전송합니다:', err);
+    scheduleFlush();
+    return false;
+  } finally {
+    flushing = false;
+    if (reflushQueued) {
+      reflushQueued = false;
+      scheduleFlush();
+    }
+  }
+}
+
+// Leaving the page is the one moment worth pushing immediately; if it does not
+// finish, the localStorage buffer replays on the next visit.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') flush();
+});
+window.addEventListener('pagehide', () => flush());
 
 async function loadJson(fileName) {
+  // An unflushed buffer is newer than whatever is on GitHub.
+  if (fileName in pendingFiles) return pendingFiles[fileName];
+
   const { text } = await ghGetFile(fileName);
   if (!text) return null;
   try {
@@ -156,10 +299,6 @@ async function loadJson(fileName) {
   } catch {
     return null;
   }
-}
-
-function saveJson(fileName, data) {
-  return ghPutFile(fileName, JSON.stringify(data, null, 2), `update ${fileName}`);
 }
 
 window.excelvoca = {
@@ -171,10 +310,12 @@ window.excelvoca = {
     return res.text();
   },
   loadProgress: () => loadJson('progress.json'),
-  saveProgress: (data) => saveJson('progress.json', data),
+  saveProgress: (data) => queueWrite('progress.json', data),
   loadSession: () => loadJson('session.json'),
-  saveSession: (data) => saveJson('session.json', data),
-  clearSession: () => ghDeleteFile('session.json', 'clear session'),
+  saveSession: (data) => queueWrite('session.json', data),
+  clearSession: () => queueWrite('session.json', null),
+  /** Push buffered study data now (end of a run, or before signing out). */
+  flush,
   // Settings (autoResume, shortcuts) are per-device, not something that needs
   // to follow you between devices, so they just live in this browser's storage.
   loadSettings: async () => {

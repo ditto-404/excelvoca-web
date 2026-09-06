@@ -68,46 +68,102 @@ async function ghGetFile(cfg, filePath) {
   return { text: Buffer.from(json.content, 'base64').toString('utf-8'), sha: json.sha };
 }
 
-async function ghPutFileOnce(cfg, filePath, text, message) {
-  const { sha } = await ghGetFile(cfg, filePath);
-  const res = await ghRequest(cfg, filePath, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      message: message || `update ${filePath}`,
-      content: Buffer.from(text, 'utf-8').toString('base64'),
-      sha: sha || undefined
-    })
-  });
-  if (!res.ok) {
-    const err = new Error(`GitHub PUT ${filePath} failed: ${res.status}`);
-    err.status = res.status;
-    throw err;
+// Writing through the Contents API costs one commit per PUT, and persistAll()
+// saves progress.json + session.json after every single answer — which is how
+// the data repo collected 1,546 auto-sync commits in two weeks. So saves no
+// longer push immediately: the local file (written atomically above) is the
+// durable copy, and GitHub receives one commit per quiet spell covering every
+// file that changed.
+const SYNC_BRANCH = 'main';
+const SYNC_IDLE_MS = 30000; // push once saving pauses for 30s
+const SYNC_MAX_MS = 300000; // ...but never sit on changes longer than 5 min
+
+function pendingFile() {
+  return dataFile('.github-pending.json');
+}
+
+function readPending() {
+  const pending = readJsonSafe(pendingFile());
+  if (!pending || !pending.files) return { files: {}, writes: 0, nextSeq: 1 };
+  return { writes: 0, nextSeq: 1, ...pending };
+}
+
+// Each entry carries a sequence number so a save that lands *during* a flush is
+// recognisably newer than the one just pushed, and survives the cleanup below.
+function markPending(fileName, action) {
+  const pending = readPending();
+  pending.files[fileName] = { action, seq: pending.nextSeq };
+  pending.nextSeq += 1;
+  pending.writes += 1;
+  writeJsonAtomic(pendingFile(), pending);
+  scheduleGithubSync();
+}
+
+function isPending(fileName) {
+  return Boolean(readPending().files[fileName]);
+}
+
+async function ghCommitFiles(cfg, files, message) {
+  const repoBase = `https://api.github.com/repos/${cfg.owner}/${cfg.repo}`;
+  const req = (route, options = {}) =>
+    fetch(`${repoBase}${route}`, {
+      ...options,
+      headers: {
+        Authorization: `Bearer ${cfg.token}`,
+        Accept: 'application/vnd.github+json',
+        ...(options.headers || {})
+      }
+    });
+  const send = (route, body, method = 'POST') =>
+    req(route, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const fail = (what, status) => {
+    const err = new Error(`GitHub ${what} failed: ${status}`);
+    err.status = status;
+    return err;
+  };
+
+  const refRes = await req(`/git/ref/heads/${SYNC_BRANCH}`);
+  if (!refRes.ok) throw fail('ref read', refRes.status);
+  const baseSha = (await refRes.json()).object.sha;
+
+  const baseCommitRes = await req(`/git/commits/${baseSha}`);
+  if (!baseCommitRes.ok) throw fail('commit read', baseCommitRes.status);
+  const baseTreeSha = (await baseCommitRes.json()).tree.sha;
+
+  const tree = [];
+  for (const [fileName, value] of Object.entries(files)) {
+    const treePath = `data/${fileName}`;
+    if (value === null) {
+      tree.push({ path: treePath, mode: '100644', type: 'blob', sha: null });
+      continue;
+    }
+    const blobRes = await send('/git/blobs', {
+      content: Buffer.from(JSON.stringify(value, null, 2), 'utf-8').toString('base64'),
+      encoding: 'base64'
+    });
+    if (!blobRes.ok) throw fail('blob create', blobRes.status);
+    tree.push({ path: treePath, mode: '100644', type: 'blob', sha: (await blobRes.json()).sha });
+  }
+
+  const treeRes = await send('/git/trees', { base_tree: baseTreeSha, tree });
+  if (!treeRes.ok) throw fail('tree create', treeRes.status);
+  const newTreeSha = (await treeRes.json()).sha;
+  if (newTreeSha === baseTreeSha) return; // nothing actually changed
+
+  const commitRes = await send('/git/commits', { message, tree: newTreeSha, parents: [baseSha] });
+  if (!commitRes.ok) throw fail('commit create', commitRes.status);
+  const newCommitSha = (await commitRes.json()).sha;
+
+  const refUpdate = await send(`/git/refs/heads/${SYNC_BRANCH}`, { sha: newCommitSha }, 'PATCH');
+  if (!refUpdate.ok) {
+    // 422 here means another writer (e.g. the web app) moved the branch first;
+    // surface it as 409 so withRetryOn409 rebuilds the commit on the new head.
+    throw fail('ref update', refUpdate.status === 422 ? 409 : refUpdate.status);
   }
 }
 
-async function ghDeleteFileOnce(cfg, filePath, message) {
-  const { sha } = await ghGetFile(cfg, filePath);
-  if (!sha) return;
-  const res = await ghRequest(cfg, filePath, {
-    method: 'DELETE',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message: message || `delete ${filePath}`, sha })
-  });
-  if (!res.ok && res.status !== 404) {
-    const err = new Error(`GitHub DELETE ${filePath} failed: ${res.status}`);
-    err.status = res.status;
-    throw err;
-  }
-}
-
-// The Contents API does a read-modify-write commit per call, so two writes to
-// the same repo close together (e.g. progress.json and session.json saved in
-// the same persistAll()) can race and one gets HTTP 409 (stale sha) even
-// though each call individually re-fetches the sha first. Two defenses:
-// serialize all GitHub calls from this process through one queue (this alone
-// fixed the observed 409s from persistAll()'s near-simultaneous saves), and
-// retry once on 409 in case another *process* (e.g. the web app) wins a race.
+// Serialize every GitHub call from this process through one queue, and retry
+// once on 409 in case another *process* (e.g. the web app) wins a race.
 let githubQueue = Promise.resolve();
 
 function enqueueGithub(task) {
@@ -128,12 +184,70 @@ async function withRetryOn409(fn) {
   }
 }
 
-function ghPutFile(cfg, filePath, text, message) {
-  return enqueueGithub(() => withRetryOn409(() => ghPutFileOnce(cfg, filePath, text, message)));
+let idleTimer = null;
+let maxTimer = null;
+
+function clearSyncTimers() {
+  clearTimeout(idleTimer);
+  clearTimeout(maxTimer);
+  idleTimer = null;
+  maxTimer = null;
 }
 
-function ghDeleteFile(cfg, filePath, message) {
-  return enqueueGithub(() => withRetryOn409(() => ghDeleteFileOnce(cfg, filePath, message)));
+function scheduleGithubSync() {
+  clearTimeout(idleTimer);
+  idleTimer = setTimeout(() => {
+    flushGithub();
+  }, SYNC_IDLE_MS);
+  if (!maxTimer) {
+    maxTimer = setTimeout(() => {
+      flushGithub();
+    }, SYNC_MAX_MS);
+  }
+}
+
+/**
+ * Pushes every buffered change as ONE commit. Called on a timer and on quit;
+ * safe to call at any time. On failure the pending marker is left alone so the
+ * next flush retries, and the local files are already durable either way.
+ */
+async function flushGithub() {
+  clearSyncTimers();
+  const cfg = loadGithubConfig();
+  if (!cfg) return true;
+
+  const pending = readPending();
+  const names = Object.keys(pending.files);
+  if (!names.length) return true;
+
+  const files = {};
+  for (const name of names) {
+    if (pending.files[name].action === 'delete') {
+      files[name] = null;
+    } else {
+      const local = readJsonSafe(dataFile(name));
+      if (local !== null) files[name] = local; // a write whose file vanished has nothing to push
+    }
+  }
+
+  try {
+    if (Object.keys(files).length) {
+      await enqueueGithub(() =>
+        withRetryOn409(() => ghCommitFiles(cfg, files, `sync: 학습 진행 상황 (${pending.writes}건 반영)`))
+      );
+    }
+    const after = readPending();
+    for (const name of names) {
+      if (after.files[name] && after.files[name].seq === pending.files[name].seq) delete after.files[name];
+    }
+    after.writes = Object.keys(after.files).length ? after.writes : 0;
+    writeJsonAtomic(pendingFile(), after);
+    return true;
+  } catch (err) {
+    console.error('GitHub 동기화 실패, 다음 시도에 재전송합니다 (로컬 파일은 이미 저장됨):', err);
+    scheduleGithubSync();
+    return false;
+  }
 }
 
 const DAILY_LOG_HEADER = ['날짜', '학습단어수', '정답수', '정확도(%)', '최고콤보', '마스터단어수', '복습필요단어수', '직급'];
@@ -179,7 +293,8 @@ function registerIpcHandlers() {
 
   ipcMain.handle('progress:load', async () => {
     const cfg = loadGithubConfig();
-    if (cfg) {
+    // An unflushed local change is newer than whatever GitHub still holds.
+    if (cfg && !isPending('progress.json')) {
       try {
         const { text } = await ghGetFile(cfg, 'progress.json');
         if (text) {
@@ -196,20 +311,14 @@ function registerIpcHandlers() {
 
   ipcMain.handle('progress:save', async (event, data) => {
     writeJsonAtomic(dataFile('progress.json'), data);
-    const cfg = loadGithubConfig();
-    if (cfg) {
-      try {
-        await ghPutFile(cfg, 'progress.json', JSON.stringify(data, null, 2), 'update progress.json');
-      } catch (err) {
-        console.error('GitHub progress:save failed (local copy still saved):', err);
-      }
-    }
+    if (loadGithubConfig()) markPending('progress.json', 'write');
     return true;
   });
 
   ipcMain.handle('session:load', async () => {
     const cfg = loadGithubConfig();
-    if (cfg) {
+    // An unflushed local change is newer than whatever GitHub still holds.
+    if (cfg && !isPending('session.json')) {
       try {
         const { text } = await ghGetFile(cfg, 'session.json');
         if (text) {
@@ -226,28 +335,14 @@ function registerIpcHandlers() {
 
   ipcMain.handle('session:save', async (event, data) => {
     writeJsonAtomic(dataFile('session.json'), data);
-    const cfg = loadGithubConfig();
-    if (cfg) {
-      try {
-        await ghPutFile(cfg, 'session.json', JSON.stringify(data, null, 2), 'update session.json');
-      } catch (err) {
-        console.error('GitHub session:save failed (local copy still saved):', err);
-      }
-    }
+    if (loadGithubConfig()) markPending('session.json', 'write');
     return true;
   });
 
   ipcMain.handle('session:clear', async () => {
     const filePath = dataFile('session.json');
     if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-    const cfg = loadGithubConfig();
-    if (cfg) {
-      try {
-        await ghDeleteFile(cfg, 'session.json', 'clear session');
-      } catch (err) {
-        console.error('GitHub session:clear failed:', err);
-      }
-    }
+    if (loadGithubConfig()) markPending('session.json', 'delete');
     return true;
   });
 
@@ -266,4 +361,4 @@ function registerIpcHandlers() {
   });
 }
 
-module.exports = { registerIpcHandlers };
+module.exports = { registerIpcHandlers, flushGithub };

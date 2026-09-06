@@ -1,0 +1,11 @@
+node_modules/
+
+# Personal study data and the GitHub sync token live in data/ next to
+# teps_words.csv (see src/main/ipc.js) and must never land in this public repo.
+data/github-sync.json
+data/progress.json
+data/session.json
+data/settings.json
+data/study_log.csv
+data/.github-pending.json
+data/*.tmp

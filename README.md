@@ -55,12 +55,14 @@ npm start
 
 ## 진행 상황 동기화
 
-두 프론트엔드가 동일한 학습 기록을 공유하도록, `progress.json`/`session.json`은 이 저장소가 아니라 **별도의 private 저장소**를 통해 GitHub Contents API로 읽고 씁니다. 이 저장소에는 개인 학습 데이터가 전혀 포함되지 않습니다.
+두 프론트엔드가 동일한 학습 기록을 공유하도록, `progress.json`/`session.json`은 이 저장소가 아니라 **별도의 private 저장소**에서 읽고 씁니다. 이 저장소에는 개인 학습 데이터가 전혀 포함되지 않습니다.
+
+읽기는 Contents API를 그대로 쓰지만, **쓰기는 모아서 한 커밋으로** 보냅니다. Contents API는 PUT 한 번이 커밋 한 개인데 문제를 풀 때마다 `progress.json`과 `session.json`이 함께 저장되므로, 그대로 두면 한 문제당 커밋이 두 개씩 쌓입니다. 그래서 저장은 즉시 로컬(데스크톱은 파일, 웹은 localStorage)에만 반영하고, 30초 동안 저장이 멎거나 최대 5분이 지나거나 앱을 닫을 때 Git Data API로 **변경된 파일 전체를 커밋 하나**로 올립니다. 전송에 실패해도 로컬 사본은 이미 안전하며 다음 시도에 재전송됩니다.
 
 ```mermaid
 flowchart LR
     accTitle: ExcelVoca 진행 상황 동기화 상세 구조
-    accDescr: 웹 버전은 최초 접속 시 GitHub PAT를 등록하고 이후엔 4자리 PIN으로 여는 인증 과정을 거치며, 데스크톱 앱과 웹 버전 둘 다 GitHub Contents API로 progress.json과 session.json 두 파일을 읽고 쓰는 구조를 보여준다.
+    accDescr: 웹 버전은 최초 접속 시 GitHub PAT를 등록하고 이후엔 4자리 PIN으로 여는 인증 과정을 거치며, 데스크톱 앱과 웹 버전 둘 다 progress.json과 session.json을 로컬에 먼저 저장한 뒤 모아서 한 커밋으로 private 저장소에 올리는 구조를 보여준다.
 
     subgraph web_layer ["웹 버전"]
         first_visit["최초 접속<br/>GitHub PAT 등록"]:::process_style
@@ -76,10 +78,10 @@ flowchart LR
     end
 
     first_visit --> pin_unlock --> web
-    desktop -->|"GitHub Contents API"| progress
-    desktop -->|"GitHub Contents API"| session
-    web -->|"GitHub Contents API"| progress
-    web -->|"GitHub Contents API"| session
+    desktop -->|"모아서 커밋 1개"| progress
+    desktop -->|"모아서 커밋 1개"| session
+    web -->|"모아서 커밋 1개"| progress
+    web -->|"모아서 커밋 1개"| session
 
     classDef process_style fill:#232522,stroke:#111111,stroke-width:2px,color:#f5f3ec
     classDef output_style fill:#f6efde,stroke:#8a6f45,stroke-width:2px,color:#4a3b22
@@ -147,12 +149,14 @@ Serve `web/index.html` as a static site (e.g. GitHub Pages). On first visit you 
 
 ### Progress sync
 
-So both frontends share the same learning record, `progress.json`/`session.json` are read and written via the GitHub Contents API from a **separate private repository**, not this one. This repository contains no personal learning data.
+So both frontends share the same learning record, `progress.json`/`session.json` are read and written from a **separate private repository**, not this one. This repository contains no personal learning data.
+
+Reads still go through the Contents API, but **writes are batched into a single commit**. One Contents-API PUT is one commit, and every answered question saves both `progress.json` and `session.json` — which would cost two commits per question. So a save only touches local storage (a file on desktop, `localStorage` on web) right away, and the changed files are pushed together as **one Git Data API commit** once saving pauses for 30 seconds, five minutes elapse, or the app closes. A failed push keeps the local copy and retries on the next flush.
 
 ```mermaid
 flowchart LR
     accTitle: ExcelVoca Progress Sync Architecture In Detail
-    accDescr: Shows the web version's auth flow (register a GitHub PAT on first visit, then unlock with a 4-digit PIN afterward) and both the desktop app and web version reading and writing progress.json and session.json via the GitHub Contents API.
+    accDescr: Shows the web version's auth flow (register a GitHub PAT on first visit, then unlock with a 4-digit PIN afterward) and both the desktop app and web version saving progress.json and session.json locally first, then pushing them to the private repository together as a single batched commit.
 
     subgraph web_layer ["Web version"]
         first_visit["First visit<br/>register GitHub PAT"]:::process_style
@@ -168,10 +172,10 @@ flowchart LR
     end
 
     first_visit --> pin_unlock --> web
-    desktop -->|"GitHub Contents API"| progress
-    desktop -->|"GitHub Contents API"| session
-    web -->|"GitHub Contents API"| progress
-    web -->|"GitHub Contents API"| session
+    desktop -->|"batched, 1 commit"| progress
+    desktop -->|"batched, 1 commit"| session
+    web -->|"batched, 1 commit"| progress
+    web -->|"batched, 1 commit"| session
 
     classDef process_style fill:#232522,stroke:#111111,stroke-width:2px,color:#f5f3ec
     classDef output_style fill:#f6efde,stroke:#8a6f45,stroke-width:2px,color:#4a3b22
